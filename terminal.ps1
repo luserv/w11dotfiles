@@ -4,57 +4,52 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-# 2. Rutas locales
+# 2. Definir rutas (Usaremos una ruta estándar para evitar confusiones)
 $installDir = "$env:LOCALAPPDATA\Programs\oh-my-posh"
 $binPath = "$installDir\bin"
 $themesPath = "$installDir\themes"
 
-# Crear carpetas si no existen
-if (!(Test-Path $binPath)) { New-Item -ItemType Directory -Path $binPath -Force }
+# Crear carpetas
 if (!(Test-Path $themesPath)) { New-Item -ItemType Directory -Path $themesPath -Force }
 
-# 3. Descargar ejecutable Oh My Posh
-Write-Host "--- Descargando Oh My Posh ---" -ForegroundColor Cyan
-Invoke-WebRequest -Uri "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-amd64.exe" -OutFile "$binPath\oh-my-posh.exe"
-
-# 4. DESCARGAR TODOS LOS TEMAS
-Write-Host "--- Descargando todos los temas oficiales ---" -ForegroundColor Cyan
-$themesUri = "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/themes.zip"
-$zipFile = "$themesPath\themes.zip"
-Invoke-WebRequest -Uri $themesUri -OutFile $zipFile
-Expand-Archive -Path $zipFile -DestinationPath $themesPath -Force
-Remove-Item $zipFile # Limpiar el zip
-
-# 5. Agregar al PATH y establecer Variable de Entorno para temas
-$currentPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
-if ($currentPath -notlike "*oh-my-posh\bin*") {
-    [System.Environment]::SetEnvironmentVariable("Path", $currentPath + ";$binPath", "User")
-    $env:Path += ";$binPath"
+# 3. Asegurar que el ejecutable existe (Descarga rápida si no está)
+if (!(Test-Path "$binPath\oh-my-posh.exe")) {
+    Write-Host "Re-descargando ejecutable..." -ForegroundColor Cyan
+    Invoke-WebRequest -Uri "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-amd64.exe" -OutFile "$binPath\oh-my-posh.exe"
 }
-# Definir POSH_THEMES_PATH permanentemente para tu usuario
+
+# 4. DESCARGAR TEMAS (Método Robusto)
+Write-Host "--- Descargando todos los temas oficiales ---" -ForegroundColor Cyan
+# Descargamos el zip de temas directamente de la fuente de la release
+$themesUrl = "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/themes.zip"
+Invoke-WebRequest -Uri $themesUrl -OutFile "$themesPath\themes.zip"
+
+# Descomprimir (Usando -Force para sobreescribir si hay algo corrupto)
+Expand-Archive -Path "$themesPath\themes.zip" -DestinationPath $themesPath -Force
+Remove-Item "$themesPath\themes.zip"
+
+# 5. Configurar Variables de Entorno
 [System.Environment]::SetEnvironmentVariable("POSH_THEMES_PATH", $themesPath, "User")
 $env:POSH_THEMES_PATH = $themesPath
 
-# 6. Instalar Fuente y Módulo
-Write-Host "--- Instalando Terminal-Icons y Fuente Hack ---" -ForegroundColor Cyan
-Install-Module -Name Terminal-Icons -Repository PSGallery -Force -AllowClobber -Scope CurrentUser
-& "$binPath\oh-my-posh.exe" font install Hack --admin
+# 6. Actualizar el Perfil para que use la ruta LOCAL
+Write-Host "--- Actualizando perfil ---" -ForegroundColor Cyan
+$profileContent = @"
+# Variable de temas
+`$env:POSH_THEMES_PATH = '$themesPath'
 
-# 7. Configurar Perfil
-Write-Host "--- Configurando perfil ---" -ForegroundColor Cyan
-$profileDir = Split-Path -Path $PROFILE
-if (!(Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force }
+# Inicialización de Oh My Posh (Usando tema Amro por defecto)
+if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+    oh-my-posh init pwsh --config "`$env:POSH_THEMES_PATH\amro.omp.json" | Invoke-Expression
+}
 
-# Usaremos el tema 'amro' que mencionaste antes, ya que ahora están todos locales
-$configLines = @(
-    '# Configuración Oh My Posh',
-    '$env:POSH_THEMES_PATH = [System.Environment]::GetEnvironmentVariable("POSH_THEMES_PATH", "User")',
-    'oh-my-posh init pwsh --config "$env:POSH_THEMES_PATH\amro.omp.json" | Invoke-Expression',
-    '',
-    '# Iconos',
-    'Import-Module -Name Terminal-Icons'
-)
+# Iconos de Terminal
+if (Get-Module -ListAvailable Terminal-Icons) {
+    Import-Module Terminal-Icons
+}
+"@
 
-Set-Content -Path $PROFILE -Value ($configLines -join "`r`n")
+Set-Content -Path $PROFILE -Value $profileContent
 
-Write-Host "`n[!] TODO LISTO. Reinicia la terminal." -ForegroundColor Green
+Write-Host "`n[!] PROCESO COMPLETADO." -ForegroundColor Green
+Write-Host "Para verificar los temas instalados, escribe: Get-ChildItem `$env:POSH_THEMES_PATH" -ForegroundColor Yellow
