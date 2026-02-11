@@ -14,26 +14,26 @@ winget install --id JanDeDobbeleer.OhMyPosh --source winget --silent
 Write-Host "--- Instalando módulo Terminal-Icons ---" -ForegroundColor Cyan
 Install-Module -Name Terminal-Icons -Repository PSGallery -Force -AllowClobber -Scope CurrentUser
 
-# 4. Instalación de la fuente específica: Hack Nerd Font
-Write-Host "--- Instalando Hack Nerd Font ---" -ForegroundColor Cyan
-oh-my-posh font install Hack
-
-# 5. Configuración del Perfil ($PROFILE)
+# 4. Configuración del Perfil ($PROFILE)
 Write-Host "--- Configurando el archivo de perfil ---" -ForegroundColor Cyan
 $profileDir = Split-Path -Path $PROFILE
 if (!(Test-Path -Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force }
 if (!(Test-Path -Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force }
 
+# Usamos comillas simples para las cadenas para evitar problemas con las variables internas
 $configLines = @(
     'oh-my-posh init pwsh --config "$env:POSH_THEMES_PATH\jandedobbeleer.omp.json" | Invoke-Expression',
     'Import-Module -Name Terminal-Icons'
 )
 
 foreach ($line in $configLines) {
-    if (!(Select-String -Path $PROFILE -Pattern [regex]::Escape($line))) {
+    # Usamos -Quiet para que devuelva booleano y escapamos la línea correctamente
+    $exists = Select-String -Path $PROFILE -Pattern ([regex]::Escape($line)) -Quiet
+    
+    if (-not $exists) {
         Add-Content -Path $PROFILE -Value "`n$line"
+        Write-Host "Añadido al perfil: $line" -ForegroundColor Gray
     }
 }
 
-Write-Host "`n[!] TODO LISTO. Reinicia la Terminal de Windows." -ForegroundColor Green
-Write-Host "[!] RECUERDA: Cambia la fuente a 'Hack NF' en la configuración de la Terminal." -ForegroundColor Yellow
+Write-Host "`n[!] TODO LISTO. Reinicia la Terminal." -ForegroundColor Green
