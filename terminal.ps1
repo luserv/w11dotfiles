@@ -8,7 +8,24 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 # 2. Instalación de aplicaciones con Winget
 Write-Host "--- Instalando PowerShell 7 y Oh My Posh ---" -ForegroundColor Cyan
 winget install --id Microsoft.PowerShell --source winget --silent
-winget install --id JanDeDobbeleer.OhMyPosh --source winget --silent
+
+# 2.1. Crear carpeta de aplicaciones en tu usuario (no requiere admin)
+$binPath = "$env:LOCALAPPDATA\Programs\oh-my-posh\bin"
+if (!(Test-Path $binPath)) { New-Item -ItemType Directory -Path $binPath -Force }
+
+# 2.2. Descargar el ejecutable directamente de GitHub
+Write-Host "Descargando Oh My Posh manualmente..." -ForegroundColor Cyan
+invoke-webrequest -uri "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-amd64.exe" -OutFile "$binPath\oh-my-posh.exe"
+
+# 2.3. Agregar la carpeta al PATH de tu usuario (para que Windows lo encuentre)
+$currentPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+if ($currentPath -notlike "*oh-my-posh*") {
+    [System.Environment]::SetEnvironmentVariable("Path", $currentPath + ";$binPath", "User")
+    $env:Path += ";$binPath"
+}
+
+Write-Host "Instalación binaria completada." -ForegroundColor Green
+
 
 # 3. Instalación de módulos
 Write-Host "--- Instalando módulo Terminal-Icons ---" -ForegroundColor Cyan
