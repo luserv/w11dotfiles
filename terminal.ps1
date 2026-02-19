@@ -1,55 +1,102 @@
 # 1. Elevar privilegios
+param(
+    [ValidateSet('PowerShell','OhMyPosh','TerminalIcons','Fonts','All','Menu')]
+    [string]$Only = 'Menu'
+)
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    $argsList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Only `"$Only`""
+    Start-Process powershell -ArgumentList $argsList -Verb RunAs
     exit
 }
 
-# 2. Definir rutas (Usaremos una ruta estándar para evitar confusiones)
-$installDir = "$env:LOCALAPPDATA\Programs\oh-my-posh"
-$binPath = "$installDir\bin"
-$themesPath = "$installDir\themes"
+. "$PSScriptRoot\scripts\powershell.ps1"
+. "$PSScriptRoot\scripts\oh-my-posh.ps1"
+. "$PSScriptRoot\scripts\terminal-icons.ps1"
+. "$PSScriptRoot\scripts\fonts.ps1"
 
-# Crear carpetas
-if (!(Test-Path $themesPath)) { New-Item -ItemType Directory -Path $themesPath -Force }
+function Test-PowerShellInstalled { [bool](Get-Command pwsh -ErrorAction SilentlyContinue) }
+function Test-OhMyPoshInstalled {
+    $local = Test-Path "$env:LOCALAPPDATA\Programs\oh-my-posh\bin\oh-my-posh.exe"
+    $path = [bool](Get-Command oh-my-posh -ErrorAction SilentlyContinue)
+    $local -or $path
+}
+function Test-TerminalIconsInstalled { [bool](Get-Module -ListAvailable -Name Terminal-Icons) }
 
-# 3. Asegurar que el ejecutable existe (Descarga rápida si no está)
-if (!(Test-Path "$binPath\oh-my-posh.exe")) {
-    Write-Host "Re-descargando ejecutable..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-amd64.exe" -OutFile "$binPath\oh-my-posh.exe"
+function Show-Menu {
+    while ($true) {
+        $psStatus = if (Test-PowerShellInstalled) { "✓ instalado" } else { "✗ no instalado" }
+        $ompStatus = if (Test-OhMyPoshInstalled) { "✓ instalado" } else { "✗ no instalado" }
+        $tiStatus = if (Test-TerminalIconsInstalled) { "✓ instalado" } else { "✗ no instalado" }
+        $fontsStatus = if (Test-FontsInstalled) { "✓ instalado" } else { "✗ no instalado" }
+        Write-Host "Selecciona una opción:" -ForegroundColor Cyan
+        Write-Host "[1] PowerShell - $psStatus"
+        Write-Host "[2] Oh My Posh - $ompStatus"
+        Write-Host "[3] Terminal Icons - $tiStatus"
+        Write-Host "[4] Fuentes - $fontsStatus"
+        Write-Host "[5] Todo"
+        Write-Host "[0] Salir"
+        $choice = Read-Host "Opción"
+        switch ($choice) {
+            '1' { return 'PowerShell' }
+            '2' { return 'OhMyPosh' }
+            '3' { return 'TerminalIcons' }
+            '4' { return 'Fonts' }
+            '5' { return 'All' }
+            '0' { exit }
+            default { Write-Host "Opción inválida" -ForegroundColor Yellow }
+        }
+    }
 }
 
-# 4. DESCARGAR TEMAS (Método Robusto)
-Write-Host "--- Descargando todos los temas oficiales ---" -ForegroundColor Cyan
-# Descargamos el zip de temas directamente de la fuente de la release
-$themesUrl = "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/themes.zip"
-Invoke-WebRequest -Uri $themesUrl -OutFile "$themesPath\themes.zip"
+if ($Only -eq 'Menu') { $Only = Show-Menu }
 
-# Descomprimir (Usando -Force para sobreescribir si hay algo corrupto)
-Expand-Archive -Path "$themesPath\themes.zip" -DestinationPath $themesPath -Force
-Remove-Item "$themesPath\themes.zip"
-
-# 5. Configurar Variables de Entorno
-[System.Environment]::SetEnvironmentVariable("POSH_THEMES_PATH", $themesPath, "User")
-$env:POSH_THEMES_PATH = $themesPath
-
-# 6. Actualizar el Perfil para que use la ruta LOCAL
-Write-Host "--- Actualizando perfil ---" -ForegroundColor Cyan
-$profileContent = @"
-# Variable de temas
-`$env:POSH_THEMES_PATH = '$themesPath'
-
-# Inicialización de Oh My Posh (Usando tema Amro por defecto)
-if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-    oh-my-posh init pwsh --config "`$env:POSH_THEMES_PATH\amro.omp.json" | Invoke-Expression
+function Prompt-Action {
+    param([string]$name,[bool]$installed)
+    if ($installed) {
+        Write-Host "$name está instalado. Opciones:" -ForegroundColor Cyan
+        Write-Host "[S] Saltar"
+        Write-Host "[R] Remover"
+        Write-Host "[I] Reinstalar"
+        $ans = Read-Host "Selecciona S/R/I"
+        switch ($ans.ToUpper()) {
+            'S' { return 'skip' }
+            'R' { return 'remove' }
+            'I' { return 'reinstall' }
+            default { return 'skip' }
+        }
+    } else {
+        Write-Host "$name no está instalado. Opciones:" -ForegroundColor Cyan
+        Write-Host "[I] Instalar"
+        Write-Host "[0] Cancelar"
+        $ans = Read-Host "Selecciona I/0"
+        switch ($ans.ToUpper()) {
+            'I' { return 'install' }
+            default { return 'skip' }
+        }
+    }
 }
 
-# Iconos de Terminal
-if (Get-Module -ListAvailable Terminal-Icons) {
-    Import-Module Terminal-Icons
+function Handle-Step {
+    param([string]$name,[scriptblock]$Install,[scriptblock]$Remove,[scriptblock]$Test)
+    $installed = & $Test
+    $action = Prompt-Action $name $installed
+    switch ($action) {
+        'skip'      { }
+        'install'   { & $Install }
+        'remove'    { & $Remove }
+        'reinstall' { & $Remove; & $Install }
+    }
 }
-"@
 
-Set-Content -Path $PROFILE -Value $profileContent
-
-Write-Host "`n[!] PROCESO COMPLETADO." -ForegroundColor Green
-Write-Host "Para verificar los temas instalados, escribe: Get-ChildItem `$env:POSH_THEMES_PATH" -ForegroundColor Yellow
+switch ($Only) {
+    'PowerShell'     { Handle-Step 'PowerShell' { Install-PowerShell } { Remove-PowerShell } { Test-PowerShellInstalled } }
+    'OhMyPosh'       { Handle-Step 'Oh My Posh' { Install-OhMyPosh } { Remove-OhMyPosh } { Test-OhMyPoshInstalled } }
+    'TerminalIcons'  { Handle-Step 'Terminal-Icons' { Install-TerminalIcons } { Remove-TerminalIcons } { Test-TerminalIconsInstalled } }
+    'Fonts'          { Handle-Step 'Fuentes' { Install-Fonts } { Remove-Fonts } { Test-FontsInstalled } }
+    'All'            {
+        Handle-Step 'PowerShell' { Install-PowerShell } { Remove-PowerShell } { Test-PowerShellInstalled }
+        Handle-Step 'Oh My Posh' { Install-OhMyPosh } { Remove-OhMyPosh } { Test-OhMyPoshInstalled }
+        Handle-Step 'Terminal-Icons' { Install-TerminalIcons } { Remove-TerminalIcons } { Test-TerminalIconsInstalled }
+        Handle-Step 'Fuentes' { Install-Fonts } { Remove-Fonts } { Test-FontsInstalled }
+    }
+}
