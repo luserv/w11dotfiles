@@ -66,6 +66,12 @@ function Install-OhMyPosh {
     Remove-Item "$themesPath\themes.zip"
     [System.Environment]::SetEnvironmentVariable("POSH_THEMES_PATH", $themesPath, "User")
     $env:POSH_THEMES_PATH = $themesPath
+    # Agregar bin al PATH del usuario si no está ya
+    $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($userPath -notlike "*$binPath*") {
+        [System.Environment]::SetEnvironmentVariable("PATH", "$userPath;$binPath", "User")
+    }
+    $env:PATH = "$env:PATH;$binPath"
     Write-Host "--- Actualizando perfil ---" -ForegroundColor Cyan
     $profileContent = @"
 # Variable de temas
