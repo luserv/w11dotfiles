@@ -81,6 +81,8 @@ if (Get-Module -ListAvailable Terminal-Icons) {
     Import-Module Terminal-Icons
 }
 "@
+    $profileDir = Split-Path $PROFILE -Parent
+    if (!(Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
     Set-Content -Path $PROFILE -Value $profileContent
     Write-Host "`n[!] PROCESO COMPLETADO." -ForegroundColor Green
     Write-Host "Para verificar los temas instalados, escribe: Get-ChildItem `$env:POSH_THEMES_PATH" -ForegroundColor Yellow
