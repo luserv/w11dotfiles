@@ -9,23 +9,42 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # ── PowerShell ────────────────────────────────────────────────────────────────
+function Get-Winget {
+    $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    # winget vive en el perfil del usuario real, no en el del admin
+    $realUser = (Get-CimInstance Win32_ComputerSystem).UserName -replace '.*\\'
+    $candidate = "C:\Users\$realUser\AppData\Local\Microsoft\WindowsApps\winget.exe"
+    if (Test-Path $candidate) { return $candidate }
+    return $null
+}
+
 function Install-PowerShell {
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    $winget = Get-Winget
     if ($winget) {
-        winget install --id Microsoft.PowerShell --source winget --silent --accept-package-agreements --accept-source-agreements
-        Write-Host "PowerShell instalado o en curso de instalación. Reinicia la terminal si es necesario." -ForegroundColor Green
-    } else {
-        Write-Host "winget no está disponible. Instala PowerShell manualmente desde GitHub." -ForegroundColor Yellow
+        & $winget install --id Microsoft.PowerShell --source winget --silent --accept-package-agreements --accept-source-agreements
+        Write-Host "PowerShell instalado. Reinicia la terminal si es necesario." -ForegroundColor Green
+        return
     }
+    # Fallback: descarga directa del instalador MSI desde GitHub
+    Write-Host "winget no encontrado. Descargando instalador desde GitHub..." -ForegroundColor Cyan
+    $msi = "$env:TEMP\PowerShell-latest.msi"
+    $api = Invoke-RestMethod "https://api.github.com/repos/PowerShell/PowerShell/releases/latest"
+    $asset = $api.assets | Where-Object { $_.name -match 'win-x64\.msi$' } | Select-Object -First 1
+    if (-not $asset) { Write-Host "No se pudo obtener la URL del instalador." -ForegroundColor Red; return }
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $msi
+    Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart ADD_EXPLORER_CONTEXT_MENU_OPENPOWERSHELL=1 ENABLE_PSREMOTING=1" -Wait
+    Remove-Item $msi -Force
+    Write-Host "PowerShell instalado. Reinicia la terminal." -ForegroundColor Green
 }
 
 function Remove-PowerShell {
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    $winget = Get-Winget
     if ($winget) {
-        winget uninstall --id Microsoft.PowerShell --source winget --silent --accept-package-agreements --accept-source-agreements
+        & $winget uninstall --id Microsoft.PowerShell --source winget --silent --accept-package-agreements --accept-source-agreements
         Write-Host "Desinstalación solicitada para PowerShell." -ForegroundColor Yellow
     } else {
-        Write-Host "winget no está disponible para desinstalar PowerShell." -ForegroundColor Yellow
+        Write-Host "winget no disponible. Desinstala PowerShell desde Configuración > Aplicaciones." -ForegroundColor Yellow
     }
 }
 
