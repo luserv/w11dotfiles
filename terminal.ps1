@@ -104,6 +104,15 @@ function Install-TerminalIcons {
         Write-Host "PowerShellGet no está disponible. No se puede instalar Terminal-Icons automáticamente." -ForegroundColor Yellow
         return
     }
+    # Instalar NuGet sin prompt interactivo
+    if (!(Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue | Where-Object { $_.Version -ge '2.8.5.201' })) {
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+    }
+    # Habilitar ejecución de scripts para el usuario actual si está bloqueada
+    $policy = Get-ExecutionPolicy -Scope CurrentUser
+    if ($policy -eq 'Undefined' -or $policy -eq 'Restricted') {
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    }
     if (!(Get-Module -ListAvailable -Name Terminal-Icons)) {
         try { Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
         Install-Module Terminal-Icons -Scope CurrentUser -Force -AllowClobber -Repository PSGallery -Confirm:$false
@@ -130,32 +139,57 @@ function Get-FontsDestPath {
     Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
 }
 
+$script:HackFontNames = @(
+    'HackNerdFont-Regular.ttf','HackNerdFont-Bold.ttf',
+    'HackNerdFont-Italic.ttf','HackNerdFont-BoldItalic.ttf',
+    'HackNerdFontMono-Regular.ttf','HackNerdFontMono-Bold.ttf',
+    'HackNerdFontMono-Italic.ttf','HackNerdFontMono-BoldItalic.ttf',
+    'HackNerdFontPropo-Regular.ttf','HackNerdFontPropo-Bold.ttf',
+    'HackNerdFontPropo-Italic.ttf','HackNerdFontPropo-BoldItalic.ttf'
+)
+
 function Test-FontsInstalled {
-    $src = Get-FontsSourcePath
     $dst = Get-FontsDestPath
-    if (!(Test-Path $src)) { return $false }
     if (!(Test-Path $dst)) { return $false }
-    $files = Get-ChildItem -Path $src -File -Include *.ttf, *.otf -ErrorAction SilentlyContinue
-    foreach ($f in $files) {
-        if (Test-Path (Join-Path $dst $f.Name)) { return $true }
+    foreach ($name in $script:HackFontNames) {
+        if (Test-Path (Join-Path $dst $name)) { return $true }
+    }
+    # Fallback: buscar en carpeta local si existe
+    $src = Get-FontsSourcePath
+    if (Test-Path $src) {
+        $files = Get-ChildItem -Path $src -File -Include *.ttf,*.otf -ErrorAction SilentlyContinue
+        foreach ($f in $files) {
+            if (Test-Path (Join-Path $dst $f.Name)) { return $true }
+        }
     }
     return $false
 }
 
 function Install-Fonts {
-    $src = Get-FontsSourcePath
     $dst = Get-FontsDestPath
-    if (!(Test-Path $src)) {
-        Write-Host "No se encontró carpeta de fuentes: $src" -ForegroundColor Yellow
-        return
-    }
     if (!(Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
     $reg = "HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-    $files = Get-ChildItem -Path $src -File -Include *.ttf, *.otf -ErrorAction SilentlyContinue
+
+    $src = Get-FontsSourcePath
+    if (Test-Path $src) {
+        # Instalación desde carpeta local (ejecución directa del .ps1)
+        $files = Get-ChildItem -Path $src -File -Include *.ttf,*.otf -ErrorAction SilentlyContinue
+    } else {
+        # Instalación remota: descargar desde GitHub
+        Write-Host "Descargando Hack Nerd Font desde GitHub..." -ForegroundColor Cyan
+        $base = "https://raw.githubusercontent.com/luserv/w11dotfiles/main/fonts/Hack"
+        $tmp = Join-Path $env:TEMP "HackNerdFont"
+        if (!(Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp -Force | Out-Null }
+        foreach ($name in $script:HackFontNames) {
+            $out = Join-Path $tmp $name
+            Invoke-WebRequest -Uri "$base/$name" -OutFile $out
+        }
+        $files = Get-ChildItem -Path $tmp -File -Include *.ttf,*.otf
+    }
+
     foreach ($f in $files) {
         Copy-Item -Path $f.FullName -Destination (Join-Path $dst $f.Name) -Force
-        $suffix = if ($f.Extension -ieq ".ttf") { " (TrueType)" } else { " (OpenType)" }
-        $name = "$($f.BaseName)$suffix"
+        $name = "$($f.BaseName) (TrueType)"
         New-ItemProperty -Path $reg -Name $name -Value $f.Name -PropertyType String -Force | Out-Null
     }
     Write-Host "Fuentes instaladas para el usuario actual." -ForegroundColor Green
