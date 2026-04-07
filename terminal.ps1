@@ -1,19 +1,162 @@
-# 1. Elevar privilegios
 param(
     [ValidateSet('PowerShell','OhMyPosh','TerminalIcons','Fonts','All','Menu')]
     [string]$Only = 'Menu'
 )
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    $argsList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Only `"$Only`""
-    Start-Process powershell -ArgumentList $argsList -Verb RunAs
-    exit
+    Write-Host "Este script debe ejecutarse como Administrador." -ForegroundColor Red
+    Write-Host "Abre PowerShell como Administrador y vuelve a ejecutar el script." -ForegroundColor Yellow
+    exit 1
 }
 
-. "$PSScriptRoot\scripts\powershell.ps1"
-. "$PSScriptRoot\scripts\oh-my-posh.ps1"
-. "$PSScriptRoot\scripts\terminal-icons.ps1"
-. "$PSScriptRoot\scripts\fonts.ps1"
+# ── PowerShell ────────────────────────────────────────────────────────────────
+function Install-PowerShell {
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($winget) {
+        winget install --id Microsoft.PowerShell --source winget --silent --accept-package-agreements --accept-source-agreements
+        Write-Host "PowerShell instalado o en curso de instalación. Reinicia la terminal si es necesario." -ForegroundColor Green
+    } else {
+        Write-Host "winget no está disponible. Instala PowerShell manualmente desde GitHub." -ForegroundColor Yellow
+    }
+}
 
+function Remove-PowerShell {
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($winget) {
+        winget uninstall --id Microsoft.PowerShell --source winget --silent --accept-package-agreements --accept-source-agreements
+        Write-Host "Desinstalación solicitada para PowerShell." -ForegroundColor Yellow
+    } else {
+        Write-Host "winget no está disponible para desinstalar PowerShell." -ForegroundColor Yellow
+    }
+}
+
+# ── Oh My Posh ────────────────────────────────────────────────────────────────
+function Install-OhMyPosh {
+    $installDir = "$env:LOCALAPPDATA\Programs\oh-my-posh"
+    $binPath = "$installDir\bin"
+    $themesPath = "$installDir\themes"
+    if (!(Test-Path $binPath)) { New-Item -ItemType Directory -Path $binPath -Force }
+    if (!(Test-Path $themesPath)) { New-Item -ItemType Directory -Path $themesPath -Force }
+    if (!(Test-Path "$binPath\oh-my-posh.exe")) {
+        Write-Host "Re-descargando ejecutable..." -ForegroundColor Cyan
+        Invoke-WebRequest -Uri "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-amd64.exe" -OutFile "$binPath\oh-my-posh.exe"
+    }
+    Write-Host "--- Descargando todos los temas oficiales ---" -ForegroundColor Cyan
+    $themesUrl = "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/themes.zip"
+    Invoke-WebRequest -Uri $themesUrl -OutFile "$themesPath\themes.zip"
+    Expand-Archive -Path "$themesPath\themes.zip" -DestinationPath $themesPath -Force
+    Remove-Item "$themesPath\themes.zip"
+    [System.Environment]::SetEnvironmentVariable("POSH_THEMES_PATH", $themesPath, "User")
+    $env:POSH_THEMES_PATH = $themesPath
+    Write-Host "--- Actualizando perfil ---" -ForegroundColor Cyan
+    $profileContent = @"
+# Variable de temas
+`$env:POSH_THEMES_PATH = '$themesPath'
+
+# Inicialización de Oh My Posh (Usando tema Amro por defecto)
+if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+    oh-my-posh init pwsh --config "`$env:POSH_THEMES_PATH\amro.omp.json" | Invoke-Expression
+}
+
+# Iconos de Terminal
+if (Get-Module -ListAvailable Terminal-Icons) {
+    Import-Module Terminal-Icons
+}
+"@
+    Set-Content -Path $PROFILE -Value $profileContent
+    Write-Host "`n[!] PROCESO COMPLETADO." -ForegroundColor Green
+    Write-Host "Para verificar los temas instalados, escribe: Get-ChildItem `$env:POSH_THEMES_PATH" -ForegroundColor Yellow
+}
+
+function Remove-OhMyPosh {
+    $installDir = "$env:LOCALAPPDATA\Programs\oh-my-posh"
+    if (Test-Path $installDir) {
+        Remove-Item $installDir -Recurse -Force
+        Write-Host "Oh My Posh removido del directorio local." -ForegroundColor Yellow
+    } else {
+        Write-Host "No se encontró instalación local de Oh My Posh." -ForegroundColor Yellow
+    }
+}
+
+# ── Terminal Icons ────────────────────────────────────────────────────────────
+function Install-TerminalIcons {
+    if (!(Get-Command Install-Module -ErrorAction SilentlyContinue)) {
+        Write-Host "PowerShellGet no está disponible. No se puede instalar Terminal-Icons automáticamente." -ForegroundColor Yellow
+        return
+    }
+    if (!(Get-Module -ListAvailable -Name Terminal-Icons)) {
+        try { Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
+        Install-Module Terminal-Icons -Scope CurrentUser -Force -AllowClobber -Repository PSGallery -Confirm:$false
+    }
+    Import-Module Terminal-Icons -ErrorAction SilentlyContinue
+}
+
+function Remove-TerminalIcons {
+    if (Get-Module -ListAvailable -Name Terminal-Icons) {
+        Uninstall-Module Terminal-Icons -AllVersions -Force -ErrorAction SilentlyContinue
+        Write-Host "Terminal-Icons desinstalado." -ForegroundColor Yellow
+    } else {
+        Write-Host "Terminal-Icons no está instalado." -ForegroundColor Yellow
+    }
+}
+
+# ── Fonts ─────────────────────────────────────────────────────────────────────
+function Get-FontsSourcePath {
+    $root = if ($PSScriptRoot) { $PSScriptRoot } else { $PWD.Path }
+    Join-Path $root "fonts"
+}
+
+function Get-FontsDestPath {
+    Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
+}
+
+function Test-FontsInstalled {
+    $src = Get-FontsSourcePath
+    $dst = Get-FontsDestPath
+    if (!(Test-Path $src)) { return $false }
+    if (!(Test-Path $dst)) { return $false }
+    $files = Get-ChildItem -Path $src -File -Include *.ttf, *.otf -ErrorAction SilentlyContinue
+    foreach ($f in $files) {
+        if (Test-Path (Join-Path $dst $f.Name)) { return $true }
+    }
+    return $false
+}
+
+function Install-Fonts {
+    $src = Get-FontsSourcePath
+    $dst = Get-FontsDestPath
+    if (!(Test-Path $src)) {
+        Write-Host "No se encontró carpeta de fuentes: $src" -ForegroundColor Yellow
+        return
+    }
+    if (!(Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
+    $reg = "HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+    $files = Get-ChildItem -Path $src -File -Include *.ttf, *.otf -ErrorAction SilentlyContinue
+    foreach ($f in $files) {
+        Copy-Item -Path $f.FullName -Destination (Join-Path $dst $f.Name) -Force
+        $suffix = if ($f.Extension -ieq ".ttf") { " (TrueType)" } else { " (OpenType)" }
+        $name = "$($f.BaseName)$suffix"
+        New-ItemProperty -Path $reg -Name $name -Value $f.Name -PropertyType String -Force | Out-Null
+    }
+    Write-Host "Fuentes instaladas para el usuario actual." -ForegroundColor Green
+}
+
+function Remove-Fonts {
+    $src = Get-FontsSourcePath
+    $dst = Get-FontsDestPath
+    $reg = "HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+    if (!(Test-Path $src)) { return }
+    $files = Get-ChildItem -Path $src -File -Include *.ttf, *.otf -ErrorAction SilentlyContinue
+    foreach ($f in $files) {
+        $suffix = if ($f.Extension -ieq ".ttf") { " (TrueType)" } else { " (OpenType)" }
+        $name = "$($f.BaseName)$suffix"
+        Remove-ItemProperty -Path $reg -Name $name -ErrorAction SilentlyContinue
+        $target = Join-Path $dst $f.Name
+        if (Test-Path $target) { Remove-Item $target -Force -ErrorAction SilentlyContinue }
+    }
+    Write-Host "Fuentes removidas para el usuario actual." -ForegroundColor Yellow
+}
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
 function Test-PowerShellInstalled { [bool](Get-Command pwsh -ErrorAction SilentlyContinue) }
 function Test-OhMyPoshInstalled {
     $local = Test-Path "$env:LOCALAPPDATA\Programs\oh-my-posh\bin\oh-my-posh.exe"
@@ -22,6 +165,7 @@ function Test-OhMyPoshInstalled {
 }
 function Test-TerminalIconsInstalled { [bool](Get-Module -ListAvailable -Name Terminal-Icons) }
 
+# ── Menú ──────────────────────────────────────────────────────────────────────
 function Show-Menu {
     while ($true) {
         $psStatus = if (Test-PowerShellInstalled) { "✓ instalado" } else { "✗ no instalado" }
